@@ -101,6 +101,16 @@ names, or for debugging purposes.`,
 				},
 			},
 			Advanced: true,
+		}, {
+			Name:       "filename_password",
+			Help:       "Password or pass phrase for filename encryption.\nLeave it empty to use file content password.",
+			IsPassword: true,
+			Advanced:   true,
+		}, {
+			Name:       "filename_password2",
+			Help:       "Password or pass phrase for filename salt. Optional but recommended.\nShould be different to the previous password.",
+			IsPassword: true,
+			Advanced:   true,
 		}},
 	})
 }
@@ -125,7 +135,21 @@ func newCipherForConfig(opt *Options) (*Cipher, error) {
 			return nil, errors.Wrap(err, "failed to decrypt password2")
 		}
 	}
-	cipher, err := newCipher(mode, password, salt, opt.DirectoryNameEncryption)
+	var fnPass string
+	if opt.FilenamePassword != "" {
+		fnPass, err = obscure.Reveal(opt.FilenamePassword)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to decrypt filename_password")
+		}
+	}
+	var fnSalt string
+	if opt.FilenamePassword2 != "" {
+		fnSalt, err = obscure.Reveal(opt.FilenamePassword2)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to decrypt filename_password2")
+		}
+	}
+	cipher, err := newCipher(mode, password, salt, fnPass, fnSalt, opt.DirectoryNameEncryption)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to make cipher")
 	}
@@ -210,6 +234,8 @@ type Options struct {
 	Password2               string `config:"password2"`
 	ShowMapping             bool   `config:"show_mapping"`
 	FileContentEncryption   bool   `config:"file_content_encryption"`
+	FilenamePassword        string `config:"filename_password"`
+	FilenamePassword2       string `config:"filename_password2"`
 }
 
 // Fs represents a wrapped fs.Fs

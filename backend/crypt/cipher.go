@@ -125,7 +125,7 @@ type Cipher struct {
 }
 
 // newCipher initialises the cipher.  If salt is "" then it uses a built in salt val
-func newCipher(mode NameEncryptionMode, password, salt string, dirNameEncrypt bool) (*Cipher, error) {
+func newCipher(mode NameEncryptionMode, password, salt, fnPass, fnSalt string, dirNameEncrypt bool) (*Cipher, error) {
 	c := &Cipher{
 		mode:           mode,
 		cryptoRand:     rand.Reader,
@@ -134,7 +134,7 @@ func newCipher(mode NameEncryptionMode, password, salt string, dirNameEncrypt bo
 	c.buffers.New = func() interface{} {
 		return make([]byte, blockSize)
 	}
-	err := c.Key(password, salt)
+	err := c.Key(password, salt, fnPass, fnSalt)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func newCipher(mode NameEncryptionMode, password, salt string, dirNameEncrypt bo
 //
 // Note that empty passsword makes all 0x00 keys which is used in the
 // tests.
-func (c *Cipher) Key(password, salt string) (err error) {
+func (c *Cipher) Key(password, salt, fnPass, fnSalt string) (err error) {
 	const keySize = len(c.dataKey) + len(c.nameKey) + len(c.nameTweak)
 	var saltBytes = defaultSalt
 	if salt != "" {
@@ -165,6 +165,16 @@ func (c *Cipher) Key(password, salt string) (err error) {
 		}
 	}
 	copy(c.dataKey[:], key)
+	if fnPass != "" {
+		var fnSaltBytes = defaultSalt
+		if fnSalt != "" {
+			fnSaltBytes = []byte(fnSalt)
+		}
+		key, err = scrypt.Key([]byte(fnPass), fnSaltBytes, 16384, 8, 1, keySize)
+		if err != nil {
+			return err
+		}
+	}
 	copy(c.nameKey[:], key[len(c.dataKey):])
 	copy(c.nameTweak[:], key[len(c.dataKey)+len(c.nameKey):])
 	// Key the name cipher
