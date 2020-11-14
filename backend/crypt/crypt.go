@@ -86,6 +86,21 @@ names, or for debugging purposes.`,
 			Default:  false,
 			Hide:     fs.OptionHideConfigurator,
 			Advanced: true,
+		}, {
+			Name:    "file_content_encryption",
+			Help:    `Option to encrypt the file content or not.`,
+			Default: true,
+			Examples: []fs.OptionExample{
+				{
+					Value: "true",
+					Help:  "Encrypt file content.",
+				},
+				{
+					Value: "false",
+					Help:  "Don't encrypt file content. Useful for syncing between cloud storage.",
+				},
+			},
+			Advanced: true,
 		}},
 	})
 }
@@ -194,6 +209,7 @@ type Options struct {
 	Password                string `config:"password"`
 	Password2               string `config:"password2"`
 	ShowMapping             bool   `config:"show_mapping"`
+	FileContentEncryption   bool   `config:"file_content_encryption"`
 }
 
 // Fs represents a wrapped fs.Fs
@@ -327,6 +343,13 @@ type putFn func(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ..
 
 // put implements Put or PutStream
 func (f *Fs) put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options []fs.OpenOption, put putFn) (fs.Object, error) {
+	if !f.opt.FileContentEncryption {
+		o, err := put(ctx, in, f.newObjectInfo(src, nonce{}), options...)
+		if err != nil {
+			return nil, err
+		}
+		return f.newObject(o), nil
+	}
 	// Encrypt the data into wrappedIn
 	wrappedIn, encrypter, err := f.cipher.encryptData(in)
 	if err != nil {
@@ -394,6 +417,9 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 
 // Hashes returns the supported hash sets.
 func (f *Fs) Hashes() hash.Set {
+	if !f.opt.FileContentEncryption {
+		return f.Fs.Hashes()
+	}
 	return hash.Set(hash.None)
 }
 
@@ -505,6 +531,9 @@ func (f *Fs) PutUnchecked(ctx context.Context, in io.Reader, src fs.ObjectInfo, 
 	if do == nil {
 		return nil, errors.New("can't PutUnchecked")
 	}
+	if !f.opt.FileContentEncryption {
+		return f.put(ctx, in, src, options, do)
+	}
 	wrappedIn, encrypter, err := f.cipher.encryptData(in)
 	if err != nil {
 		return nil, err
@@ -598,6 +627,9 @@ func (f *Fs) computeHashWithNonce(ctx context.Context, nonce nonce, src fs.Objec
 //
 // Note that we break lots of encapsulation in this function.
 func (f *Fs) ComputeHash(ctx context.Context, o *Object, src fs.Object, hashType hash.Type) (hashStr string, err error) {
+	if !f.opt.FileContentEncryption {
+		return o.Object.Hash(ctx, hashType)
+	}
 	// Read the nonce - opening the file is sufficient to read the nonce in
 	// use a limited read so we only read the header
 	in, err := o.Object.Open(ctx, &fs.RangeOption{Start: 0, End: int64(fileHeaderSize) - 1})
@@ -803,6 +835,9 @@ func (o *Object) Remote() string {
 
 // Size returns the size of the file
 func (o *Object) Size() int64 {
+	if !o.f.opt.FileContentEncryption {
+		return o.Object.Size()
+	}
 	size, err := o.f.cipher.DecryptedSize(o.Object.Size())
 	if err != nil {
 		fs.Debugf(o, "Bad size for decrypt: %v", err)
@@ -813,6 +848,9 @@ func (o *Object) Size() int64 {
 // Hash returns the selected checksum of the file
 // If no checksum is available it returns ""
 func (o *Object) Hash(ctx context.Context, ht hash.Type) (string, error) {
+	if !o.f.opt.FileContentEncryption {
+		return o.Object.Hash(ctx, ht)
+	}
 	return "", hash.ErrUnsupported
 }
 
@@ -823,6 +861,9 @@ func (o *Object) UnWrap() fs.Object {
 
 // Open opens the file for read.  Call Close() on the returned io.ReadCloser
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (rc io.ReadCloser, err error) {
+	if !o.f.opt.FileContentEncryption {
+		return o.Object.Open(ctx, options...)
+	}
 	var openOptions []fs.OpenOption
 	var offset, limit int64 = 0, -1
 	for _, option := range options {
@@ -937,6 +978,9 @@ func (o *ObjectInfo) Size() int64 {
 // Hash returns the selected checksum of the file
 // If no checksum is available it returns ""
 func (o *ObjectInfo) Hash(ctx context.Context, hash hash.Type) (string, error) {
+	if !o.f.opt.FileContentEncryption {
+		return o.ObjectInfo.Hash(ctx, hash)
+	}
 	var srcObj fs.Object
 	var ok bool
 	// Get the underlying object if there is one
